@@ -1,0 +1,38 @@
+register s3n://uw-cse-344-oregon.aws.amazon.com/myudfs.jar
+
+-- load the test file into Pig
+raw = LOAD 's3n://uw-cse-344-oregon.aws.amazon.com/cse344-test-file' USING TextLoader as (line:chararray);
+-- later you will load to other files, example:
+--raw = LOAD 's3n://uw-cse-344-oregon.aws.amazon.com/btc-2010-chunk-000' USING TextLoader as (line:chararray); 
+
+-- parse each line into ntriples
+ntriples = foreach raw generate FLATTEN(myudfs.RDFSplit3(line)) as (subject:chararray,predicate:chararray,object:chararray);
+
+--group the n-triples by object column
+objects = group ntriples by (object) PARALLEL 50;
+
+-- flatten the objects out (because group by produces a tuple of each object
+-- in the first column, and we want each object ot be a string, not a tuple),
+-- and count the number of tuples associated with each object
+count_by_object = foreach objects generate flatten($0), COUNT($1) as count PARALLEL 50;
+
+--order the resulting tuples by their count in descending order
+count_by_object_ordered = order count_by_object by (count)  PARALLEL 50;
+
+-- store the results in the folder /user/hadoop/example-results;
+-- Alternatively, you can store the results in S3, see instructions:
+-- store count_by_object_ordered into 's3n://superman/example-results';
+
+count_all= GROUP count_by_object_ordered ALL;
+count_nrow = FOREACH count_all GENERATE COUNT(count_by_object_ordered);
+store count_nrow into '/user/hadoop/q1-result' using PigStorage();
+
+ssh -i my-key-pair.pem hadoop@ec2-54-200-200-134.us-west-2.compute.amazonaws.com
+hadoop dfs -mkdir /user/hadoop
+fs -mkdir /user/hadoop
+hadoop fs -getmerge  /user/hadoop/q1-result q1-result
+hadoop dfs -copyToLocal /user/hadoop/q1-result q1-result
+
+scp -i my-key-pair.pem hadoop@ec2-54-200-200-134.us-west-2.compute.amazonaws.com:q1-result .
+
+
